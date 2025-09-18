@@ -1,0 +1,401 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Sistema de Processamento de Áudio</title>
+    <style>
+        * {
+            margin: 0;
+            padding: 0;
+            box-sizing: border-box;
+            font-family: 'Segoe UI', Tahoma, Geneva, Verdana, sans-serif;
+        }
+        
+        body {
+            background: linear-gradient(135deg, #6e8efb, #a777e3);
+            min-height: 100vh;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            padding: 20px;
+        }
+        
+        .container {
+            background-color: rgba(255, 255, 255, 0.9);
+            border-radius: 20px;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+            width: 100%;
+            max-width: 500px;
+            padding: 30px;
+            text-align: center;
+        }
+        
+        h1 {
+            color: #333;
+            margin-bottom: 20px;
+            font-size: 28px;
+        }
+        
+        .status {
+            margin: 20px 0;
+            padding: 15px;
+            border-radius: 10px;
+            font-weight: 500;
+            transition: all 0.3s ease;
+        }
+        
+        .recording {
+            background-color: #ffebee;
+            color: #d32f2f;
+        }
+        
+        .processing {
+            background-color: #fff8e1;
+            color: #ff8f00;
+        }
+        
+        .playing {
+            background-color: #e8f5e9;
+            color: #388e3c;
+        }
+        
+        .idle {
+            background-color: #e3f2fd;
+            color: #1565c0;
+        }
+        
+        .button {
+            background-color: #5c6bc0;
+            color: white;
+            border: none;
+            padding: 15px 30px;
+            font-size: 18px;
+            border-radius: 50px;
+            cursor: pointer;
+            transition: all 0.3s ease;
+            margin: 10px 0;
+            outline: none;
+            display: inline-flex;
+            align-items: center;
+            justify-content: center;
+        }
+        
+        .button:hover {
+            background-color: #3f51b5;
+            transform: translateY(-2px);
+            box-shadow: 0 5px 15px rgba(0, 0, 0, 0.2);
+        }
+        
+        .button:active {
+            transform: translateY(0);
+        }
+        
+        .button:disabled {
+            background-color: #9e9e9e;
+            cursor: not-allowed;
+            transform: none;
+            box-shadow: none;
+        }
+        
+        .button.recording {
+            background-color: #f44336;
+            animation: pulse 1.5s infinite;
+        }
+        
+        @keyframes pulse {
+            0% { transform: scale(1); }
+            50% { transform: scale(1.05); }
+            100% { transform: scale(1); }
+        }
+        
+        .visualizer {
+            height: 100px;
+            width: 100%;
+            margin: 20px 0;
+            border-radius: 10px;
+            background-color: rgba(0, 0, 0, 0.05);
+            overflow: hidden;
+            position: relative;
+        }
+        
+        .bars {
+            display: flex;
+            justify-content: center;
+            align-items: flex-end;
+            height: 100%;
+            padding: 0 5px;
+        }
+        
+        .bar {
+            width: 8px;
+            background-color: #5c6bc0;
+            margin: 0 2px;
+            border-radius: 4px 4px 0 0;
+            transition: height 0.1s ease;
+        }
+        
+        .audio-player {
+            width: 100%;
+            margin-top: 20px;
+        }
+        
+        .transcription {
+            margin-top: 20px;
+            padding: 15px;
+            background-color: #f5f5f5;
+            border-radius: 10px;
+            text-align: left;
+            max-height: 150px;
+            overflow-y: auto;
+        }
+        
+        .transcription h3 {
+            margin-bottom: 10px;
+            color: #333;
+            border-bottom: 1px solid #ddd;
+            padding-bottom: 5px;
+        }
+        
+        .instructions {
+            margin-top: 20px;
+            font-size: 14px;
+            color: #666;
+            line-height: 1.5;
+        }
+    </style>
+</head>
+<body>
+    <div class="container">
+        <h1>🎤 Sistema de Processamento de Áudio</h1>
+        
+        <div class="visualizer">
+            <div class="bars" id="visualizer"></div>
+        </div>
+        
+        <div class="status idle" id="status">
+            Pronto para gravar
+        </div>
+        
+        <button class="button" id="recordButton">
+            <span>Iniciar Gravação</span>
+        </button>
+        
+        <div class="audio-player">
+            <audio id="audioPlayback" controls></audio>
+        </div>
+        
+        <div class="transcription">
+            <h3>Transcrição:</h3>
+            <div id="transcriptionText">Nenhuma transcrição ainda...</div>
+        </div>
+        
+        <div class="instructions">
+            <p>Clique em "Iniciar Gravação" e fale. O sistema detectará automaticamente quando você parar de falar e processará seu áudio.</p>
+        </div>
+    </div>
+
+    <script>
+        document.addEventListener('DOMContentLoaded', function() {
+            const recordButton = document.getElementById('recordButton');
+            const statusDiv = document.getElementById('status');
+            const audioPlayback = document.getElementById('audioPlayback');
+            const transcriptionText = document.getElementById('transcriptionText');
+            const visualizer = document.getElementById('visualizer');
+            
+            let mediaRecorder;
+            let audioChunks = [];
+            let audioContext;
+            let analyser;
+            let microphone;
+            let javascriptNode;
+            let isRecording = false;
+            let silenceTimer;
+            let bars = [];
+            
+            // Criar barras do visualizador
+            for (let i = 0; i < 30; i++) {
+                const bar = document.createElement('div');
+                bar.className = 'bar';
+                bar.style.height = '5px';
+                visualizer.appendChild(bar);
+                bars.push(bar);
+            }
+            
+            // Verificar suporte a gravação de áudio
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                statusDiv.textContent = 'Seu navegador não suporta gravação de áudio.';
+                recordButton.disabled = true;
+                return;
+            }
+            
+            recordButton.addEventListener('click', toggleRecording);
+            
+            async function toggleRecording() {
+                if (isRecording) {
+                    stopRecording();
+                } else {
+                    startRecording();
+                }
+            }
+            
+            async function startRecording() {
+                try {
+                    const stream = await navigator.mediaDevices.getUserMedia({ audio: true });
+                    
+                    // Configurar áudio context para visualização
+                    audioContext = new (window.AudioContext || window.webkitAudioContext)();
+                    analyser = audioContext.createAnalyser();
+                    microphone = audioContext.createMediaStreamSource(stream);
+                    javascriptNode = audioContext.createScriptProcessor(2048, 1, 1);
+                    
+                    analyser.smoothingTimeConstant = 0.8;
+                    analyser.fftSize = 1024;
+                    
+                    microphone.connect(analyser);
+                    analyser.connect(javascriptNode);
+                    javascriptNode.connect(audioContext.destination);
+                    
+                    javascriptNode.onaudioprocess = function() {
+                        const array = new Uint8Array(analyser.frequencyBinCount);
+                        analyser.getByteFrequencyData(array);
+                        
+                        // Calcular volume médio
+                        let values = 0;
+                        for (let i = 0; i < array.length; i++) {
+                            values += array[i];
+                        }
+                        
+                        const average = values / array.length;
+                        
+                        // Atualizar visualizador
+                        updateVisualizer(array);
+                        
+                        // Verificar silêncio
+                        if (average < 20) { // Limite de silêncio
+                            if (!silenceTimer) {
+                                silenceTimer = setTimeout(() => {
+                                    if (isRecording) {
+                                        stopRecording();
+                                    }
+                                }, 5000); // 5 segundos de silêncio
+                            }
+                        } else {
+                            clearTimeout(silenceTimer);
+                            silenceTimer = null;
+                        }
+                    };
+                    
+                    // Configurar MediaRecorder
+                    mediaRecorder = new MediaRecorder(stream);
+                    mediaRecorder.ondataavailable = (event) => {
+                        audioChunks.push(event.data);
+                    };
+                    
+                    mediaRecorder.onstop = () => {
+                        processAudio();
+                    };
+                    
+                    // Iniciar gravação
+                    audioChunks = [];
+                    mediaRecorder.start();
+                    isRecording = true;
+                    recordButton.textContent = "Parar Gravação";
+                    recordButton.classList.add('recording');
+                    statusDiv.textContent = "Gravando... Fale agora";
+                    statusDiv.className = 'status recording';
+                    
+                } catch (error) {
+                    console.error('Erro ao acessar o microfone:', error);
+                    statusDiv.textContent = 'Erro ao acessar o microfone: ' + error.message;
+                }
+            }
+            
+            function stopRecording() {
+                if (mediaRecorder && isRecording) {
+                    mediaRecorder.stop();
+                    isRecording = false;
+                    
+                    // Parar todas as streams
+                    mediaRecorder.stream.getTracks().forEach(track => track.stop());
+                    
+                    if (javascriptNode) javascriptNode.disconnect();
+                    if (analyser) analyser.disconnect();
+                    if (microphone) microphone.disconnect();
+                    if (audioContext) audioContext.close();
+                    
+                    clearTimeout(silenceTimer);
+                    silenceTimer = null;
+                    
+                    recordButton.textContent = "Iniciar Gravação";
+                    recordButton.classList.remove('recording');
+                    statusDiv.textContent = "Processando áudio...";
+                    statusDiv.className = 'status processing';
+                    recordButton.disabled = true;
+                    
+                    // Reset visualizer
+                    bars.forEach(bar => {
+                        bar.style.height = '5px';
+                    });
+                }
+            }
+            
+            function updateVisualizer(dataArray) {
+                const step = Math.floor(dataArray.length / bars.length);
+                
+                for (let i = 0; i < bars.length; i++) {
+                    const index = i * step;
+                    let value = dataArray[index] / 255;
+                    let height = Math.max(5, value * 100);
+                    bars[i].style.height = height + 'px';
+                }
+            }
+            
+            async function processAudio() {
+                try {
+                    const audioBlob = new Blob(audioChunks, { type: 'audio/wav' });
+                    
+                    // Enviar áudio para o backend
+                    const formData = new FormData();
+                    formData.append('audio', audioBlob, 'audio.wav');
+                    
+                    const response = await fetch('http://localhost:5000/process_audio', {
+                        method: 'POST',
+                        body: formData
+                    });
+                    
+                    if (!response.ok) {
+                        throw new Error('Erro no servidor: ' + response.status);
+                    }
+                    
+                    // Obter a resposta de áudio
+                    const audioResponseBlob = await response.blob();
+                    const audioUrl = URL.createObjectURL(audioResponseBlob);
+                    
+                    // Reproduzir áudio
+                    audioPlayback.src = audioUrl;
+                    statusDiv.textContent = "Reproduzindo resposta...";
+                    statusDiv.className = 'status playing';
+                    
+                    // Quando o áudio terminar, reabilitar a gravação
+                    audioPlayback.onended = function() {
+                        statusDiv.textContent = "Pronto para gravar novamente";
+                        statusDiv.className = 'status idle';
+                        recordButton.disabled = false;
+                    };
+                    
+                    // Tentar obter a transcrição do header ou fazer uma segunda requisição se necessário
+                    // Esta parte depende de como seu backend está estruturado
+                    // transcriptionText.textContent = "Transcrição será exibida aqui";
+                    
+                } catch (error) {
+                    console.error('Erro ao processar áudio:', error);
+                    statusDiv.textContent = 'Erro: ' + error.message;
+                    statusDiv.className = 'status error';
+                    recordButton.disabled = false;
+                }
+            }
+        });
+    </script>
+</body>
+</html>
