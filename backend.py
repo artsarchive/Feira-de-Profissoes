@@ -6,9 +6,26 @@ import time
 import os
 from groq import Groq
 import google.generativeai as genai
-from elevenlabs.client import ElevenLabs
-from elevenlabs import play
 from dotenv import load_dotenv
+
+# Bibliotecas novas para usar o áudio clonado
+import torch
+import torch.serialization
+from TTS.api import TTS
+from TTS.tts.configs.xtts_config import XttsConfig
+
+from TTS.tts.models.xtts import XttsAudioConfig 
+
+_original_torch_load = torch.load
+
+def patched_torch_load(f, *args, **kwargs):
+    kwargs['weights_only'] = False
+    return _original_torch_load(f, *args, **kwargs)
+
+torch.load = patched_torch_load
+
+# torch.load aceita a classe XttsConfig
+torch.serialization.add_safe_globals([XttsConfig, XttsAudioConfig])
 
 # Carregar variáveis de ambiente
 load_dotenv()
@@ -16,17 +33,32 @@ load_dotenv()
 app = Flask(__name__)
 CORS(app)
 
+# DEVICE = "cuda" if torch.cuda.is_available() else "cpu"
+DEVICE = "cpu"
+try:
+    TTS_model = TTS("tts_models/multilingual/multi-dataset/xtts_v2").to(DEVICE)
+
+    print(f"Modelo Coqui TTS (XTTSv2) carregado com sucesso no dispositivo: {DEVICE}")
+except Exception as e: 
+    TTS_model = None
+    import traceback
+    print(f"Aviso: Falha ao carregar o modelo Coqui TTS. Erro {e}")
+    traceback.print_exc()
+    print("-------------------------")
+    print("Coqui TTS Model falhou no carregamento. Confira dependências, a configuração da CUDA e os arquivos do modelo.")
+    print("-------------------------")
+
+
+CLONED_VOICE_REF = "nathalie.wav"
+
 # Configurações das APIs, crie o arquivo .env com suas keys
 GROQ_API_KEY = os.getenv("GROQ_API_KEY")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
-ELEVENLABS_API_KEY = os.getenv("ELEVENLABS_API_KEY")
-ELEVENLABS_VOICE_ID = os.getenv("ELEVENLABS_VOICE_ID")
 
 # Clientes das APIs
 groq_client = Groq(api_key=GROQ_API_KEY)
 genai.configure(api_key=GEMINI_API_KEY)
 gemini_model = genai.GenerativeModel('gemini-2.5-pro')
-elevenlabs_client = ElevenLabs(api_key=ELEVENLABS_API_KEY)
 
 @app.route('/process_audio', methods=['POST'])
 def process_audio():
@@ -49,18 +81,10 @@ def process_audio():
         processed_text = process_text(transcript)
         print(f"Texto processado: {processed_text}")
         
-        # Gera áudio com ElevenLabs
-        audio_response = generate_audio(processed_text)
-        
-        # Salva o áudio gerado
-        output_path = f"output_audio_{int(time.time())}.mp3"
-        with open(output_path, "wb") as f:
-            for chunk in audio_response:
-                if chunk:
-                    f.write(chunk)
-        
-        # Retorna o áudio gerado
-        return send_file(output_path, as_attachment=True, download_name="response.mp3")
+        # Gera áudio com Coqui TTS local
+        output_path = generate_audio(processed_text)
+
+        return send_file(output_path, as_attachment=True, download_name="response.wav")
     
     except Exception as e:
         print(f"Erro: {str(e)}")
@@ -89,13 +113,19 @@ def process_text(text):
     return response.text
 
 def generate_audio(text):
-    audio = elevenlabs_client.text_to_speech.convert(
+    if not TTS_model: 
+        raise Exception("Modelo Coqui TTS não carregado.")
+    
+    output_path = f"output_coqui_{int(time.time())}.wav"
+
+    TTS_model.tts_to_file(
         text=text,
-        voice_id=ELEVENLABS_VOICE_ID,
-        model_id="eleven_multilingual_v2",
-        output_format="mp3_44100_128"
+        file_path=output_path,
+        speaker_wav=CLONED_VOICE_REF,
+        language="pt"
     )
-    return audio
+
+    return output_path
 
 if __name__ == '__main__':
     app.run(debug=True, port=5000)
